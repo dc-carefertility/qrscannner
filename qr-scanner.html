@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Code Scanner</title>
+
+  <!-- ✅ Load html5-qrcode from CDNJS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"
+          integrity="sha512-r6rDA7W6ZeQhvl8S7yRVQUKVHdexq+GAlNkNNqVC7YyIV+NwqCTJe2hDWCiffTyRNOeGEzRRJ9ifvRm/HCzGYg=="
+          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    #reader {
+      width: 320px;
+      margin: 20px auto;
+    }
+    #output {
+      margin-top: 20px;
+      font-size: 1.2em;
+      font-weight: bold;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <h1>QR Code Scanner</h1>
+  <p>Allow camera access when prompted and aim at a QR code.</p>
+
+  <div id="reader"></div>
+  <div id="output">Waiting for scan…</div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      if (typeof Html5Qrcode === "undefined") {
+        document.getElementById('output').innerText = "Library did not load!";
+        return;
+      }
+
+      function onScanSuccess(decodedText) {
+        document.getElementById('output').innerText = `Scanned: ${decodedText}`;
+        // Optional: stop after first scan
+        // html5QrCode.stop();
+      }
+
+      const html5QrCode = new Html5Qrcode("reader");
+
+      Html5Qrcode.getCameras().then(devices => {
+        if (devices && devices.length) {
+          const cameraId = devices[0].id;
+          html5QrCode.start(
+            cameraId,
+            { fps: 10, qrbox: 250 },
+            onScanSuccess
+          ).catch(err => {
+            document.getElementById('output').innerText = "Start error: " + err;
+          });
+        } else {
+          document.getElementById('output').innerText = "No cameras found.";
+        }
+      }).catch(err => {
+        document.getElementById('output').innerText = "Camera error: " + err;
+      });
+    });
+  </script>
+</body>
+</html>
+
