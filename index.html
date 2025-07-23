@@ -3,125 +3,193 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QR Code Scanner with Stop on Scan</title>
+  <title>QR Code Scanner Enhanced</title>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"
           integrity="sha512-r6rDA7W6ZeQhvl8S7yRVQUKVHdexq+GAlNkNNqVC7YyIV+NwqCTJe2hDWCiffTyRNOeGEzRRJ9ifvRm/HCzGYg=="
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-    #reader { width: 100%; max-width: 480px; margin: 20px auto; }
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; position: relative; }
+    #reader { width: 100%; max-width: 480px; margin: 20px auto; display: none; }
     #output { margin-top: 20px; font-size: 1.2em; font-weight: bold; word-break: break-word; }
-    #cameraSelect { margin-top: 10px; padding: 6px; font-size: 1em; }
+    #cameraSelect, button { margin: 5px; padding: 8px 12px; font-size: 1em; }
+    #controls { margin: 15px 0; }
     #log {
       margin-top: 20px;
       text-align: left;
       background: #f0f0f0;
       border: 1px solid #ccc;
       padding: 10px;
-      max-height: 200px;
+      max-height: 150px;
       overflow-y: auto;
-      font-size: 0.9em;
+      font-size: 0.85em;
       white-space: pre-wrap;
+    }
+    #version {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: #333;
+      color: #fff;
+      padding: 4px 8px;
+      font-size: 0.8em;
+      border-radius: 4px;
+      opacity: 0.8;
     }
   </style>
 </head>
 <body>
-  <h1>QR Code Scanner</h1>
-  <p>Select a camera and aim it at a QR code in good light.</p>
+  <!-- ✅ Version badge -->
+  <div id="version">v0.0.11</div>
 
-  <select id="cameraSelect"></select>
+  <h1>QR Code Scanner</h1>
+
+  <div id="controls">
+    <select id="cameraSelect"></select>
+    <button id="startBtn">Start Scanning</button>
+    <button id="stopBtn" style="display:none;">Scan New QR</button>
+    <button id="torchBtn" style="display:none;">Toggle Torch</button>
+    <button id="focusBtn" style="display:none;">Refocus</button>
+  </div>
+
   <div id="reader"></div>
-  <div id="output">Waiting for scan…</div>
-  <div id="log">[Debug log will appear here]</div>
+  <div id="output">Idle…</div>
+  <div id="log">[Debug log]</div>
 
   <script>
+    // If you want to easily change version, just edit the textContent below
+    document.getElementById('version').textContent = 'v0.0.11';
+
     let html5QrCode;
     let currentCameraId = null;
     let scanning = false;
+    let torchOn = false;
 
-    function logToPage(msg) {
-      const logDiv = document.getElementById('log');
+    const logDiv = document.getElementById('log');
+    const outputDiv = document.getElementById('output');
+    const readerDiv = document.getElementById('reader');
+    const cameraSelect = document.getElementById('cameraSelect');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const torchBtn = document.getElementById('torchBtn');
+    const focusBtn = document.getElementById('focusBtn');
+
+    function log(msg) {
       logDiv.textContent += `\n${msg}`;
       logDiv.scrollTop = logDiv.scrollHeight;
     }
 
-    function startScanner(cameraId) {
-      // If already scanning, stop first
-      if (html5QrCode) {
-        html5QrCode.stop().catch(() => {}).finally(() => {
-          begin(cameraId);
-        });
-      } else {
-        html5QrCode = new Html5Qrcode("reader");
-        begin(cameraId);
-      }
-    }
-
-    function begin(cameraId) {
-      logToPage(`Starting camera: ${cameraId}`);
-      scanning = true;
-      html5QrCode.start(
-        cameraId,
-        { fps: 10, qrbox: { width: 300, height: 300 } },
-        onScanSuccess,
-        onScanFailure
-      ).catch(err => {
-        logToPage(`Start error: ${err}`);
-        document.getElementById('output').innerText = "Start error: " + err;
+    function populateCameras(devices) {
+      cameraSelect.innerHTML = '';
+      devices.forEach((device, idx) => {
+        const opt = document.createElement('option');
+        opt.value = device.id;
+        opt.text = device.label || `Camera ${idx + 1}`;
+        cameraSelect.appendChild(opt);
       });
-      currentCameraId = cameraId;
+
+      // Restore last used camera
+      const savedCam = localStorage.getItem('lastCameraId');
+      if (savedCam && devices.find(d => d.id === savedCam)) {
+        cameraSelect.value = savedCam;
+      }
     }
 
     function onScanSuccess(decodedText) {
-      if (!scanning) return; // ignore if already stopped
+      if (!scanning) return;
       scanning = false;
-
-      // Show result
-      document.getElementById('output').innerText = `✅ Scanned: ${decodedText}`;
-      logToPage(`Decoded: ${decodedText}`);
-
-      // Stop the camera immediately after a scan
-      html5QrCode.stop()
-        .then(() => {
-          logToPage("Camera stopped after scan.");
-        })
-        .catch(err => {
-          logToPage(`Error stopping camera: ${err}`);
-        });
+      outputDiv.textContent = `✅ Scanned: ${decodedText}`;
+      log(`Decoded: ${decodedText}`);
+      stopScanner();
     }
 
     function onScanFailure(err) {
-      // you can log failures if needed:
-      // logToPage(`Scan failure: ${err}`);
+      // frequent failures expected
     }
 
-    // Populate camera list and start default
+    function startScanner() {
+      currentCameraId = cameraSelect.value;
+      localStorage.setItem('lastCameraId', currentCameraId);
+
+      if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode("reader");
+      }
+
+      log(`Starting camera: ${currentCameraId}`);
+      html5QrCode.start(
+        currentCameraId,
+        { fps: 10, qrbox: { width: 300, height: 300 } },
+        onScanSuccess,
+        onScanFailure
+      ).then(() => {
+        scanning = true;
+        readerDiv.style.display = 'block';
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        torchBtn.style.display = 'inline-block';
+        focusBtn.style.display = 'inline-block';
+        outputDiv.textContent = 'Scanning…';
+      }).catch(err => {
+        log(`Start error: ${err}`);
+        outputDiv.textContent = `Start error: ${err}`;
+      });
+    }
+
+    function stopScanner() {
+      if (html5QrCode) {
+        html5QrCode.stop().then(() => {
+          readerDiv.style.display = 'none';
+          startBtn.style.display = 'inline-block';
+          stopBtn.style.display = 'none';
+          torchBtn.style.display = 'none';
+          focusBtn.style.display = 'none';
+          log('Camera stopped.');
+        }).catch(err => log(`Error stopping: ${err}`));
+      }
+    }
+
+    async function toggleTorch() {
+      if (!html5QrCode) return;
+      try {
+        torchOn = !torchOn;
+        await html5QrCode.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
+        log(`Torch ${torchOn ? 'ON' : 'OFF'}`);
+      } catch (e) {
+        log('Torch not supported: ' + e);
+      }
+    }
+
+    async function requestFocus() {
+      if (!html5QrCode) return;
+      try {
+        await html5QrCode.applyVideoConstraints({ advanced: [{ focusMode: "continuous" }] });
+        log('Focus requested (support varies)');
+      } catch (e) {
+        log('Focus not supported: ' + e);
+      }
+    }
+
+    // Event bindings
+    startBtn.addEventListener('click', startScanner);
+    stopBtn.addEventListener('click', () => {
+      outputDiv.textContent = 'Idle…';
+      stopScanner();
+    });
+    torchBtn.addEventListener('click', toggleTorch);
+    focusBtn.addEventListener('click', requestFocus);
+
+    // Populate cameras on load
     Html5Qrcode.getCameras().then(devices => {
       if (devices && devices.length) {
-        const select = document.getElementById('cameraSelect');
-        devices.forEach((device, idx) => {
-          const option = document.createElement('option');
-          option.value = device.id;
-          option.text = device.label || `Camera ${idx + 1}`;
-          select.appendChild(option);
-        });
-
-        // Start first camera by default
-        startScanner(devices[0].id);
-
-        // Change camera on selection
-        select.addEventListener('change', (e) => {
-          startScanner(e.target.value);
-        });
+        populateCameras(devices);
       } else {
-        document.getElementById('output').innerText = "No cameras found.";
-        logToPage("No cameras found.");
+        outputDiv.textContent = 'No cameras found.';
+        log('No cameras found.');
       }
     }).catch(err => {
-      document.getElementById('output').innerText = "Camera error: " + err;
-      logToPage(`Camera error: ${err}`);
+      outputDiv.textContent = 'Camera error: ' + err;
+      log('Camera error: ' + err);
     });
   </script>
 </body>
