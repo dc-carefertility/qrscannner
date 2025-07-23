@@ -15,15 +15,34 @@
   #output { margin-top: 20px; font-size: 1.2em; font-weight: bold; word-break: break-word; }
   #controls { margin: 15px 0; display:none; }
   #controls select, #controls button { margin: 5px; padding: 8px 12px; font-size: 1em; }
-  #startBtn { padding: 10px 20px; font-size: 1.1em; }
-  #log { margin-top: 20px; text-align: left; background:#f0f0f0; border:1px solid #ccc; padding:10px;
-         max-height:150px; overflow-y:auto; font-size:0.85em; white-space:pre-wrap; display:none; }
-  #version { position:fixed; top:10px; right:10px; background:#333; color:#fff; padding:4px 8px;
-             font-size:0.8em; border-radius:4px; opacity:0.8; }
+  #startBtn, #newScanBtn { padding: 10px 20px; font-size: 1.1em; }
+  #log {
+    margin-top: 20px;
+    text-align: left;
+    background:#f0f0f0;
+    border:1px solid #ccc;
+    padding:10px;
+    max-height:150px;
+    overflow-y:auto;
+    font-size:0.85em;
+    white-space:pre-wrap;
+    display:block;
+  }
+  #version {
+    position:fixed;
+    top:10px;
+    right:10px;
+    background:#333;
+    color:#fff;
+    padding:4px 8px;
+    font-size:0.8em;
+    border-radius:4px;
+    opacity:0.8;
+  }
 </style>
 </head>
 <body>
-<div id="version">v0.0.12</div>
+<div id="version">v0.0.13</div>
 
 <h1>QR Code Scanner</h1>
 
@@ -61,9 +80,12 @@
 
   function log(msg){
     console.log(msg);
+    const logDiv = document.getElementById('log');
+    logDiv.textContent += `\n${msg}`;
+    logDiv.scrollTop = logDiv.scrollHeight;
   }
 
-  // --- UI helpers ---
+  // UI states
   function showStartState(){
     startBtn.style.display = 'inline-block';
     controlsDiv.style.display = 'none';
@@ -76,7 +98,7 @@
   function showScanningState(){
     startBtn.style.display = 'none';
     controlsDiv.style.display = 'block';
-    readerDiv.style.display = 'block';
+    readerDiv.style.display = 'block'; // show BEFORE starting
     newScanBtn.style.display = 'none';
     outputDiv.textContent = 'Scanning…';
   }
@@ -88,7 +110,7 @@
     newScanBtn.style.display = 'inline-block';
   }
 
-  // --- Camera logic ---
+  // Camera setup
   function populateCameras(devices){
     cameraSelect.innerHTML = '';
     devices.forEach((device, idx)=>{
@@ -107,30 +129,36 @@
     currentCameraId = cameraSelect.value;
     localStorage.setItem('lastCameraId', currentCameraId);
     if(!html5QrCode) html5QrCode = new Html5Qrcode("reader");
+    showScanningState(); // show video container first
+    log("Starting camera: " + currentCameraId);
+
     html5QrCode.start(
       currentCameraId,
-      { fps: 10, qrbox: {width:300, height:300} },
+      { fps: 10, qrbox: { width: 300, height: 300 } },
       onScanSuccess,
       onScanFailure
     ).then(()=>{
       scanning = true;
-      showScanningState();
       timeoutHandle = setTimeout(()=>{
         if(scanning){
-          log('Timeout reached, stopping.');
+          log('Timeout: no scan after 2 minutes');
           stopScanner();
           showStartState();
         }
-      }, 120000); // 2 minutes
+      }, 120000);
     }).catch(err=>{
+      log("Start error: " + err);
       outputDiv.textContent = "Start error: " + err;
+      showStartState();
     });
   }
 
   function stopScanner(){
     clearTimeout(timeoutHandle);
     if(html5QrCode){
-      html5QrCode.stop().catch(e=>log('stop error '+e));
+      html5QrCode.stop().then(()=>{
+        log("Camera stopped.");
+      }).catch(e=>log("Stop error: " + e));
     }
     scanning = false;
   }
@@ -139,13 +167,14 @@
     if(!scanning) return;
     scanning = false;
     outputDiv.textContent = `✅ Scanned: ${decodedText}`;
-    log('Decoded: '+decodedText);
+    log("Decoded: " + decodedText);
     stopScanner();
     showResultState();
   }
 
   function onScanFailure(err){
-    // silent
+    // optional debug:
+    // log("Scan failure: " + err);
   }
 
   async function toggleTorch(){
@@ -153,9 +182,9 @@
     try{
       torchOn = !torchOn;
       await html5QrCode.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
-      log(`Torch ${torchOn?'ON':'OFF'}`);
+      log(`Torch ${torchOn ? 'ON' : 'OFF'}`);
     }catch(e){
-      log('Torch not supported: '+e);
+      log("Torch not supported: " + e);
     }
   }
 
@@ -163,48 +192,42 @@
     if(!html5QrCode) return;
     try{
       await html5QrCode.applyVideoConstraints({ advanced: [{ focusMode: "continuous" }] });
-      log('Focus requested');
+      log("Focus requested");
     }catch(e){
-      log('Focus not supported: '+e);
+      log("Focus not supported: " + e);
     }
   }
 
-  // --- Event listeners ---
-  startBtn.addEventListener('click', ()=>{
-    startScanner();
-  });
-
+  // Event bindings
+  startBtn.addEventListener('click', ()=>{ startScanner(); });
   cameraSelect.addEventListener('change', ()=>{
     if(scanning){
       stopScanner();
       startScanner();
     }
   });
-
   cancelBtn.addEventListener('click', ()=>{
     stopScanner();
     showStartState();
   });
-
-  newScanBtn.addEventListener('click', ()=>{
-    showStartState();
-  });
-
+  newScanBtn.addEventListener('click', ()=>{ showStartState(); });
   torchBtn.addEventListener('click', toggleTorch);
   focusBtn.addEventListener('click', requestFocus);
 
-  // --- Init ---
+  // Initial camera list
   Html5Qrcode.getCameras().then(devices=>{
     if(devices && devices.length){
       populateCameras(devices);
-    } else {
+    }else{
       outputDiv.textContent = 'No cameras found.';
+      log('No cameras found.');
     }
   }).catch(err=>{
-    outputDiv.textContent = 'Camera error: '+err;
+    outputDiv.textContent = 'Camera error: ' + err;
+    log('Camera error: ' + err);
   });
 
-  // Initial UI
+  // Start state by default
   showStartState();
 </script>
 </body>
