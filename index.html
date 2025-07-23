@@ -44,8 +44,6 @@
 
       function onScanSuccess(decodedText) {
         document.getElementById('output').innerText = `Scanned: ${decodedText}`;
-        // Optional: stop after first scan
-        // html5QrCode.stop();
       }
 
       const html5QrCode = new Html5Qrcode("reader");
@@ -70,4 +68,3 @@
   </script>
 </body>
 </html>
-
