@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QR Code Scanner with Camera Flip & Debug Log</title>
+  <title>QR Code Scanner with Stop on Scan</title>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"
           integrity="sha512-r6rDA7W6ZeQhvl8S7yRVQUKVHdexq+GAlNkNNqVC7YyIV+NwqCTJe2hDWCiffTyRNOeGEzRRJ9ifvRm/HCzGYg=="
@@ -39,8 +39,8 @@
   <script>
     let html5QrCode;
     let currentCameraId = null;
+    let scanning = false;
 
-    // Helper: log to page
     function logToPage(msg) {
       const logDiv = document.getElementById('log');
       logDiv.textContent += `\n${msg}`;
@@ -48,47 +48,56 @@
     }
 
     function startScanner(cameraId) {
+      // If already scanning, stop first
       if (html5QrCode) {
         html5QrCode.stop().catch(() => {}).finally(() => {
-          logToPage(`Starting camera: ${cameraId}`);
-          html5QrCode.start(
-            cameraId,
-            { fps: 10, qrbox: { width: 300, height: 300 } },
-            onScanSuccess,
-            onScanFailure
-          ).catch(err => {
-            logToPage(`Start error: ${err}`);
-            document.getElementById('output').innerText = "Start error: " + err;
-          });
+          begin(cameraId);
         });
       } else {
         html5QrCode = new Html5Qrcode("reader");
-        logToPage(`Starting camera: ${cameraId}`);
-        html5QrCode.start(
-          cameraId,
-          { fps: 10, qrbox: { width: 300, height: 300 } },
-          onScanSuccess,
-          onScanFailure
-        ).catch(err => {
-          logToPage(`Start error: ${err}`);
-          document.getElementById('output').innerText = "Start error: " + err;
-        });
+        begin(cameraId);
       }
+    }
+
+    function begin(cameraId) {
+      logToPage(`Starting camera: ${cameraId}`);
+      scanning = true;
+      html5QrCode.start(
+        cameraId,
+        { fps: 10, qrbox: { width: 300, height: 300 } },
+        onScanSuccess,
+        onScanFailure
+      ).catch(err => {
+        logToPage(`Start error: ${err}`);
+        document.getElementById('output').innerText = "Start error: " + err;
+      });
       currentCameraId = cameraId;
     }
 
     function onScanSuccess(decodedText) {
+      if (!scanning) return; // ignore if already stopped
+      scanning = false;
+
+      // Show result
       document.getElementById('output').innerText = `✅ Scanned: ${decodedText}`;
       logToPage(`Decoded: ${decodedText}`);
-      // To stop after first scan:
-      // html5QrCode.stop();
+
+      // Stop the camera immediately after a scan
+      html5QrCode.stop()
+        .then(() => {
+          logToPage("Camera stopped after scan.");
+        })
+        .catch(err => {
+          logToPage(`Error stopping camera: ${err}`);
+        });
     }
 
     function onScanFailure(err) {
-      // Uncomment to see continuous failures:
+      // you can log failures if needed:
       // logToPage(`Scan failure: ${err}`);
     }
 
+    // Populate camera list and start default
     Html5Qrcode.getCameras().then(devices => {
       if (devices && devices.length) {
         const select = document.getElementById('cameraSelect');
@@ -102,6 +111,7 @@
         // Start first camera by default
         startScanner(devices[0].id);
 
+        // Change camera on selection
         select.addEventListener('change', (e) => {
           startScanner(e.target.value);
         });
