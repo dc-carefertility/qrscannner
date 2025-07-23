@@ -3,67 +3,71 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QR Code Scanner</title>
+  <title>QR Code Scanner with Camera Flip</title>
 
-  <!-- ✅ Load html5-qrcode from CDNJS -->
+  <!-- Load html5-qrcode from CDNJS -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"
           integrity="sha512-r6rDA7W6ZeQhvl8S7yRVQUKVHdexq+GAlNkNNqVC7YyIV+NwqCTJe2hDWCiffTyRNOeGEzRRJ9ifvRm/HCzGYg=="
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 20px;
-    }
-    #reader {
-      width: 320px;
-      margin: 20px auto;
-    }
-    #output {
-      margin-top: 20px;
-      font-size: 1.2em;
-      font-weight: bold;
-      word-break: break-word;
-    }
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    #reader { width: 320px; margin: 20px auto; }
+    #output { margin-top: 20px; font-size: 1.2em; font-weight: bold; word-break: break-word; }
+    #cameraSelect { margin-top: 10px; padding: 6px; font-size: 1em; }
   </style>
 </head>
 <body>
   <h1>QR Code Scanner</h1>
-  <p>Allow camera access when prompted and aim at a QR code.</p>
+  <p>Allow camera access and select which camera to use.</p>
 
+  <select id="cameraSelect"></select>
   <div id="reader"></div>
   <div id="output">Waiting for scan…</div>
 
   <script>
-    document.addEventListener("DOMContentLoaded", function() {
-      if (typeof Html5Qrcode === "undefined") {
-        document.getElementById('output').innerText = "Library did not load!";
-        return;
+    let html5QrCode;
+    let currentCameraId = null;
+
+    function startScanner(cameraId) {
+      if (html5QrCode) {
+        html5QrCode.stop().catch(() => {}).finally(() => {
+          html5QrCode.start(cameraId, { fps: 10, qrbox: 250 }, onScanSuccess);
+        });
+      } else {
+        html5QrCode = new Html5Qrcode("reader");
+        html5QrCode.start(cameraId, { fps: 10, qrbox: 250 }, onScanSuccess);
       }
+      currentCameraId = cameraId;
+    }
 
-      function onScanSuccess(decodedText) {
-        document.getElementById('output').innerText = `Scanned: ${decodedText}`;
+    function onScanSuccess(decodedText) {
+      document.getElementById('output').innerText = `Scanned: ${decodedText}`;
+    }
+
+    // Populate camera list
+    Html5Qrcode.getCameras().then(devices => {
+      if (devices && devices.length) {
+        const select = document.getElementById('cameraSelect');
+        devices.forEach((device, idx) => {
+          const option = document.createElement('option');
+          option.value = device.id;
+          option.text = device.label || `Camera ${idx + 1}`;
+          select.appendChild(option);
+        });
+
+        // Start first camera by default
+        startScanner(devices[0].id);
+
+        // Handle camera change
+        select.addEventListener('change', (e) => {
+          startScanner(e.target.value);
+        });
+      } else {
+        document.getElementById('output').innerText = "No cameras found.";
       }
-
-      const html5QrCode = new Html5Qrcode("reader");
-
-      Html5Qrcode.getCameras().then(devices => {
-        if (devices && devices.length) {
-          const cameraId = devices[0].id;
-          html5QrCode.start(
-            cameraId,
-            { fps: 10, qrbox: 250 },
-            onScanSuccess
-          ).catch(err => {
-            document.getElementById('output').innerText = "Start error: " + err;
-          });
-        } else {
-          document.getElementById('output').innerText = "No cameras found.";
-        }
-      }).catch(err => {
-        document.getElementById('output').innerText = "Camera error: " + err;
-      });
+    }).catch(err => {
+      document.getElementById('output').innerText = "Camera error: " + err;
     });
   </script>
 </body>
