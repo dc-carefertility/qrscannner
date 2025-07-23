@@ -3,49 +3,92 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QR Code Scanner with Camera Flip</title>
+  <title>QR Code Scanner with Camera Flip & Debug Log</title>
 
-  <!-- Load html5-qrcode from CDNJS -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"
           integrity="sha512-r6rDA7W6ZeQhvl8S7yRVQUKVHdexq+GAlNkNNqVC7YyIV+NwqCTJe2hDWCiffTyRNOeGEzRRJ9ifvRm/HCzGYg=="
           crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
   <style>
     body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-    #reader { width: 320px; margin: 20px auto; }
+    #reader { width: 100%; max-width: 480px; margin: 20px auto; }
     #output { margin-top: 20px; font-size: 1.2em; font-weight: bold; word-break: break-word; }
     #cameraSelect { margin-top: 10px; padding: 6px; font-size: 1em; }
+    #log {
+      margin-top: 20px;
+      text-align: left;
+      background: #f0f0f0;
+      border: 1px solid #ccc;
+      padding: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.9em;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
   <h1>QR Code Scanner</h1>
-  <p>Allow camera access and select which camera to use.</p>
+  <p>Select a camera and aim it at a QR code in good light.</p>
 
   <select id="cameraSelect"></select>
   <div id="reader"></div>
   <div id="output">Waiting for scan…</div>
+  <div id="log">[Debug log will appear here]</div>
 
   <script>
     let html5QrCode;
     let currentCameraId = null;
 
+    // Helper: log to page
+    function logToPage(msg) {
+      const logDiv = document.getElementById('log');
+      logDiv.textContent += `\n${msg}`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
     function startScanner(cameraId) {
       if (html5QrCode) {
         html5QrCode.stop().catch(() => {}).finally(() => {
-          html5QrCode.start(cameraId, { fps: 10, qrbox: 250 }, onScanSuccess);
+          logToPage(`Starting camera: ${cameraId}`);
+          html5QrCode.start(
+            cameraId,
+            { fps: 10, qrbox: { width: 300, height: 300 } },
+            onScanSuccess,
+            onScanFailure
+          ).catch(err => {
+            logToPage(`Start error: ${err}`);
+            document.getElementById('output').innerText = "Start error: " + err;
+          });
         });
       } else {
         html5QrCode = new Html5Qrcode("reader");
-        html5QrCode.start(cameraId, { fps: 10, qrbox: 250 }, onScanSuccess);
+        logToPage(`Starting camera: ${cameraId}`);
+        html5QrCode.start(
+          cameraId,
+          { fps: 10, qrbox: { width: 300, height: 300 } },
+          onScanSuccess,
+          onScanFailure
+        ).catch(err => {
+          logToPage(`Start error: ${err}`);
+          document.getElementById('output').innerText = "Start error: " + err;
+        });
       }
       currentCameraId = cameraId;
     }
 
     function onScanSuccess(decodedText) {
-      document.getElementById('output').innerText = `Scanned: ${decodedText}`;
+      document.getElementById('output').innerText = `✅ Scanned: ${decodedText}`;
+      logToPage(`Decoded: ${decodedText}`);
+      // To stop after first scan:
+      // html5QrCode.stop();
     }
 
-    // Populate camera list
+    function onScanFailure(err) {
+      // Uncomment to see continuous failures:
+      // logToPage(`Scan failure: ${err}`);
+    }
+
     Html5Qrcode.getCameras().then(devices => {
       if (devices && devices.length) {
         const select = document.getElementById('cameraSelect');
@@ -59,15 +102,16 @@
         // Start first camera by default
         startScanner(devices[0].id);
 
-        // Handle camera change
         select.addEventListener('change', (e) => {
           startScanner(e.target.value);
         });
       } else {
         document.getElementById('output').innerText = "No cameras found.";
+        logToPage("No cameras found.");
       }
     }).catch(err => {
       document.getElementById('output').innerText = "Camera error: " + err;
+      logToPage(`Camera error: ${err}`);
     });
   </script>
 </body>
