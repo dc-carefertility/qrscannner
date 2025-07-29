@@ -32,11 +32,11 @@
     .label {
       width: 5cm; height: 2.5cm;
       padding: 0.3cm; box-sizing: border-box;
-      font-size: 9pt; font-family: Arial, sans-serif;
+      font-size: 6pt; font-family: Arial, sans-serif;
       border: 1px solid #000; margin: 0 auto;
       text-align: left;
     }
-    .label div { margin-bottom: 2mm; line-height: 1.2em; }
+    .label div { margin-bottom: 1mm; line-height: 1.2em; }
 
     @media print {
       body * { visibility: hidden; }
@@ -46,7 +46,7 @@
   </style>
 </head>
 <body>
-<div id="version">v0.0.18</div>
+<div id="version">v0.0.19</div>
 
 <h1>QR Code Scanner</h1>
 
@@ -73,8 +73,8 @@
     <div class="label">
       <div><strong>Name:</strong> <span id="field-name"></span></div>
       <div><strong>Number:</strong> <span id="field-number"></span></div>
-      <div><strong>DOB:</strong> <span id="field-dob"></span> &nbsp;&nbsp; <strong>SEX:</strong> <span id="field-sex"></span></div>
-      <div><strong>Date/Time:</strong> <span id="field-datetime"></span></div>
+      <div style="margin-bottom: 2mm;"><strong>DOB:</strong> <span id="field-dob"></span> &nbsp;&nbsp; <strong>SEX:</strong> <span id="field-sex"></span></div>
+      <div style="margin-bottom: 3mm;"><strong>Date/Time:</strong> <span id="field-datetime"></span></div>
       <div><strong>Signed:</strong> ____________________________</div>
     </div>
   </div>
