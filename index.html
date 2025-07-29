@@ -46,7 +46,7 @@
   </style>
 </head>
 <body>
-<div id="version">v0.0.14</div>
+<div id="version">v0.0.15</div>
 
 <h1>QR Code Scanner</h1>
 
@@ -159,35 +159,42 @@
   }
 
   function startScanner(){
-    currentCameraId = cameraSelect.value;
-    localStorage.setItem('lastCameraId', currentCameraId);
-    if(!html5QrCode) html5QrCode = new Html5Qrcode("reader");
-    showScanningState();
-    log("Starting camera: " + currentCameraId);
+  currentCameraId = cameraSelect.value;
+  localStorage.setItem('lastCameraId', currentCameraId);
+  if(!html5QrCode) html5QrCode = new Html5Qrcode("reader");
+  showScanningState();
+  log("Starting camera: " + currentCameraId);
 
-    html5QrCode.start(
-      currentCameraId,
-      { fps: 10, qrbox: { width: 300, height: 300 } },
-      onScanSuccess,
-      onScanFailure
-    ).then(()=>{
-      scanning = true;
-      videoTrack = html5QrCode.getRunningTrack();
-      if(videoTrack) setupZoom(videoTrack);
+  html5QrCode.start(
+    currentCameraId,
+    { fps: 10, qrbox: { width: 300, height: 300 } },
+    onScanSuccess,
+    onScanFailure
+  ).then(()=>{
+    scanning = true;
+    
+    // Access internal video track directly
+    videoTrack = html5QrCode._localVideoTrack;
+    if (videoTrack) {
+      log("Video track obtained");
+      setupZoom(videoTrack);
+    } else {
+      log("Failed to get video track");
+    }
 
-      timeoutHandle = setTimeout(()=>{
-        if(scanning){
-          log('Timeout: no scan after 2 minutes');
-          stopScanner();
-          showStartState();
-        }
-      }, 120000);
-    }).catch(err=>{
-      log("Start error: " + err);
-      outputDiv.textContent = "Start error: " + err;
-      showStartState();
-    });
-  }
+    timeoutHandle = setTimeout(()=>{
+      if(scanning){
+        log('Timeout: no scan after 2 minutes');
+        stopScanner();
+        showStartState();
+      }
+    }, 120000);
+  }).catch(err=>{
+    log("Start error: " + err);
+    outputDiv.textContent = "Start error: " + err;
+    showStartState();
+  });
+}
 
   function stopScanner(){
     clearTimeout(timeoutHandle);
