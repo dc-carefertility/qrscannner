@@ -46,7 +46,7 @@
   </style>
 </head>
 <body>
-<div id="version">v0.0.16</div>
+<div id="version">v0.0.17</div>
 
 <h1>QR Code Scanner</h1>
 
@@ -177,15 +177,19 @@
 
     // Wait before accessing video track
     setTimeout(() => {
-      videoTrack = html5QrCode._localVideoTrack;
-      if (videoTrack) {
-        log("✅ Video track obtained");
-        setupZoom(videoTrack);
-      } else {
-        log("❌ Failed to get video track — zoom will be unavailable.");
-        zoomContainer.style.display = 'none';
-      }
-    }, 250); // allow time for internal setup
+  const videoEl = document.querySelector("#reader video");
+  const stream = videoEl?.srcObject;
+  videoTrack = stream?.getVideoTracks?.()[0];
+
+  if (videoTrack) {
+    log("✅ Video track obtained from DOM");
+    setupZoom(videoTrack);
+  } else {
+    log("❌ Still could not get video track — zoom will be unavailable.");
+    zoomContainer.style.display = 'none';
+  }
+}, 500); // slight delay for video to render
+
 
     timeoutHandle = setTimeout(()=>{
       if(scanning){
