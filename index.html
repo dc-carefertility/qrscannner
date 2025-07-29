@@ -11,35 +11,37 @@
 
   <style>
     body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-    #reader { width: 100%; max-width: 480px; margin: 20px auto; display: none; }
+    #reader { width: 100%; max-width: 480px; margin: 20px auto; display:none; }
     #output { margin-top: 20px; font-size: 1.2em; font-weight: bold; word-break: break-word; }
-    #controls { margin: 15px 0; display: none; }
-    #controls select, #controls button, #zoomSlider {
-      margin: 5px; padding: 8px 12px; font-size: 1em;
-    }
+    #controls { margin: 15px 0; display:none; }
+    #controls select, #controls button, #zoomSlider { margin: 5px; padding: 8px 12px; font-size: 1em; }
     #startBtn, #newScanBtn { padding: 10px 20px; font-size: 1.1em; }
     #log {
       margin-top: 20px;
       text-align: left;
-      background: #f0f0f0;
-      border: 1px solid #ccc;
-      padding: 10px;
-      max-height: 150px;
-      overflow-y: auto;
-      font-size: 0.85em;
-      white-space: pre-wrap;
-      display: block;
+      background:#f0f0f0;
+      border:1px solid #ccc;
+      padding:10px;
+      max-height:150px;
+      overflow-y:auto;
+      font-size:0.85em;
+      white-space:pre-wrap;
+      display:block;
     }
     #version {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      background: #333;
-      color: #fff;
-      padding: 4px 8px;
-      font-size: 0.8em;
-      border-radius: 4px;
-      opacity: 0.8;
+      position:fixed;
+      top:10px;
+      right:10px;
+      background:#333;
+      color:#fff;
+      padding:4px 8px;
+      font-size:0.8em;
+      border-radius:4px;
+      opacity:0.8;
+    }
+    #zoomContainer {
+      display: none;
+      margin-top: 10px;
     }
   </style>
 </head>
@@ -52,11 +54,13 @@
 
 <div id="controls">
   <select id="cameraSelect"></select>
-  <label for="zoomSlider">Zoom:</label>
-  <input type="range" id="zoomSlider" min="1" max="1" step="0.1" style="width: 150px; display:none;" />
   <button id="torchBtn">Toggle Torch</button>
   <button id="focusBtn">Refocus</button>
   <button id="cancelBtn">Cancel Scan</button>
+  <div id="zoomContainer">
+    <label for="zoomSlider">Zoom:</label>
+    <input type="range" id="zoomSlider" min="1" max="1" step="0.1" value="1" />
+  </div>
 </div>
 
 <div id="reader"></div>
@@ -76,31 +80,33 @@
   const focusBtn = document.getElementById('focusBtn');
   const cancelBtn = document.getElementById('cancelBtn');
   const zoomSlider = document.getElementById('zoomSlider');
+  const zoomContainer = document.getElementById('zoomContainer');
 
   let html5QrCode;
   let currentCameraId = null;
   let torchOn = false;
   let scanning = false;
   let timeoutHandle = null;
+  let videoTrack = null;
 
-  function log(msg) {
+  function log(msg){
     console.log(msg);
     const logDiv = document.getElementById('log');
     logDiv.textContent += `\n${msg}`;
     logDiv.scrollTop = logDiv.scrollHeight;
   }
 
-  function showStartState() {
+  function showStartState(){
     startBtn.style.display = 'inline-block';
     controlsDiv.style.display = 'none';
     readerDiv.style.display = 'none';
     newScanBtn.style.display = 'none';
     outputDiv.textContent = '';
-    zoomSlider.style.display = 'none';
+    zoomContainer.style.display = 'none';
     clearTimeout(timeoutHandle);
   }
 
-  function showScanningState() {
+  function showScanningState(){
     startBtn.style.display = 'none';
     controlsDiv.style.display = 'block';
     readerDiv.style.display = 'block';
@@ -108,64 +114,54 @@
     outputDiv.textContent = 'Scanning…';
   }
 
-  function showResultState() {
+  function showResultState(){
     startBtn.style.display = 'none';
     controlsDiv.style.display = 'none';
     readerDiv.style.display = 'none';
     newScanBtn.style.display = 'inline-block';
+    zoomContainer.style.display = 'none';
   }
 
-  function populateCameras(devices) {
+  function populateCameras(devices){
     cameraSelect.innerHTML = '';
-    devices.forEach((device, idx) => {
+    devices.forEach((device, idx)=>{
       const opt = document.createElement('option');
       opt.value = device.id;
-      opt.text = device.label || `Camera ${idx + 1}`;
+      opt.text = device.label || `Camera ${idx+1}`;
       cameraSelect.appendChild(opt);
     });
     const saved = localStorage.getItem('lastCameraId');
-    if (saved && devices.find(d => d.id === saved)) {
+    if(saved && devices.find(d=>d.id===saved)){
       cameraSelect.value = saved;
     }
   }
 
-  async function setupZoomControl() {
-    try {
-      const track = html5QrCode.getRunningTrack();
-      if (!track) return;
-
-      const capabilities = track.getCapabilities?.();
-      if (capabilities && capabilities.zoom) {
-        zoomSlider.min = capabilities.zoom.min;
-        zoomSlider.max = capabilities.zoom.max;
-        zoomSlider.step = capabilities.zoom.step || 0.1;
-        const settings = track.getSettings();
-        zoomSlider.value = settings.zoom || capabilities.zoom.min;
-        zoomSlider.style.display = 'inline-block';
-
-        zoomSlider.oninput = () => {
-          track.applyConstraints({
-            advanced: [{ zoom: parseFloat(zoomSlider.value) }]
-          }).then(() => {
-            log("Zoom set to: " + zoomSlider.value);
-          }).catch(err => {
-            log("Zoom error: " + err);
-          });
-        };
-        log("Zoom control ready.");
-      } else {
-        zoomSlider.style.display = 'none';
-        log("Zoom not supported.");
-      }
-    } catch (err) {
-      log("Zoom setup error: " + err);
+  async function setupZoom(track){
+    const capabilities = track.getCapabilities();
+    if(capabilities.zoom){
+      zoomSlider.min = capabilities.zoom.min;
+      zoomSlider.max = capabilities.zoom.max;
+      zoomSlider.step = capabilities.zoom.step || 0.1;
+      zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
+      zoomSlider.oninput = async () => {
+        try {
+          await track.applyConstraints({ advanced: [{ zoom: parseFloat(zoomSlider.value) }] });
+          log("Zoom set to " + zoomSlider.value);
+        } catch (e) {
+          log("Zoom error: " + e);
+        }
+      };
+      zoomContainer.style.display = 'block';
+    } else {
+      zoomContainer.style.display = 'none';
+      log("Zoom not supported on this device");
     }
   }
 
-  function startScanner() {
+  function startScanner(){
     currentCameraId = cameraSelect.value;
     localStorage.setItem('lastCameraId', currentCameraId);
-    if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
+    if(!html5QrCode) html5QrCode = new Html5Qrcode("reader");
     showScanningState();
     log("Starting camera: " + currentCameraId);
 
@@ -174,35 +170,39 @@
       { fps: 10, qrbox: { width: 300, height: 300 } },
       onScanSuccess,
       onScanFailure
-    ).then(() => {
+    ).then(()=>{
       scanning = true;
-      setupZoomControl();
-      timeoutHandle = setTimeout(() => {
-        if (scanning) {
+      videoTrack = html5QrCode.getRunningTrack();
+      if(videoTrack) setupZoom(videoTrack);
+
+      timeoutHandle = setTimeout(()=>{
+        if(scanning){
           log('Timeout: no scan after 2 minutes');
           stopScanner();
           showStartState();
         }
       }, 120000);
-    }).catch(err => {
+    }).catch(err=>{
       log("Start error: " + err);
       outputDiv.textContent = "Start error: " + err;
       showStartState();
     });
   }
 
-  function stopScanner() {
+  function stopScanner(){
     clearTimeout(timeoutHandle);
-    if (html5QrCode) {
-      html5QrCode.stop().then(() => {
+    if(html5QrCode){
+      html5QrCode.stop().then(()=>{
         log("Camera stopped.");
-      }).catch(e => log("Stop error: " + e));
+      }).catch(e=>log("Stop error: " + e));
     }
     scanning = false;
+    videoTrack = null;
+    zoomContainer.style.display = 'none';
   }
 
-  function onScanSuccess(decodedText) {
-    if (!scanning) return;
+  function onScanSuccess(decodedText){
+    if(!scanning) return;
     scanning = false;
     outputDiv.textContent = `✅ Scanned: ${decodedText}`;
     log("Decoded: " + decodedText);
@@ -210,60 +210,61 @@
     showResultState();
   }
 
-  function onScanFailure(err) {
-    // Optional debug: log("Scan failure: " + err);
+  function onScanFailure(err){
+    // Optional scan failure log
   }
 
-  async function toggleTorch() {
-    if (!html5QrCode) return;
-    try {
+  async function toggleTorch(){
+    if(!videoTrack) return;
+    try{
       torchOn = !torchOn;
-      await html5QrCode.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
+      await videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
       log(`Torch ${torchOn ? 'ON' : 'OFF'}`);
-    } catch (e) {
+    }catch(e){
       log("Torch not supported: " + e);
     }
   }
 
-  async function requestFocus() {
-    if (!html5QrCode) return;
-    try {
-      await html5QrCode.applyVideoConstraints({ advanced: [{ focusMode: "continuous" }] });
+  async function requestFocus(){
+    if(!videoTrack) return;
+    try{
+      await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
       log("Focus requested");
-    } catch (e) {
+    }catch(e){
       log("Focus not supported: " + e);
     }
   }
 
   // Event bindings
-  startBtn.addEventListener('click', () => { startScanner(); });
-  cameraSelect.addEventListener('change', () => {
-    if (scanning) {
+  startBtn.addEventListener('click', startScanner);
+  cameraSelect.addEventListener('change', ()=>{
+    if(scanning){
       stopScanner();
       startScanner();
     }
   });
-  cancelBtn.addEventListener('click', () => {
+  cancelBtn.addEventListener('click', ()=>{
     stopScanner();
     showStartState();
   });
-  newScanBtn.addEventListener('click', () => { showStartState(); });
+  newScanBtn.addEventListener('click', showStartState);
   torchBtn.addEventListener('click', toggleTorch);
   focusBtn.addEventListener('click', requestFocus);
 
-  // Initialise camera list
-  Html5Qrcode.getCameras().then(devices => {
-    if (devices && devices.length) {
+  // Camera discovery
+  Html5Qrcode.getCameras().then(devices=>{
+    if(devices && devices.length){
       populateCameras(devices);
-    } else {
+    }else{
       outputDiv.textContent = 'No cameras found.';
       log('No cameras found.');
     }
-  }).catch(err => {
+  }).catch(err=>{
     outputDiv.textContent = 'Camera error: ' + err;
     log('Camera error: ' + err);
   });
 
+  // Start default state
   showStartState();
 </script>
 </body>
