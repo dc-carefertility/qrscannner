@@ -46,7 +46,7 @@
   </style>
 </head>
 <body>
-<div id="version">v0.0.15</div>
+<div id="version">v0.0.16</div>
 
 <h1>QR Code Scanner</h1>
 
@@ -137,26 +137,28 @@
   }
 
   async function setupZoom(track){
-    const capabilities = track.getCapabilities();
-    if(capabilities.zoom){
-      zoomSlider.min = capabilities.zoom.min;
-      zoomSlider.max = capabilities.zoom.max;
-      zoomSlider.step = capabilities.zoom.step || 0.1;
-      zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
-      zoomSlider.oninput = async () => {
-        try {
-          await track.applyConstraints({ advanced: [{ zoom: parseFloat(zoomSlider.value) }] });
-          log("Zoom set to " + zoomSlider.value);
-        } catch (e) {
-          log("Zoom error: " + e);
-        }
-      };
-      zoomContainer.style.display = 'block';
-    } else {
-      zoomContainer.style.display = 'none';
-      log("Zoom not supported on this device");
-    }
+  const capabilities = track.getCapabilities();
+  if(capabilities.zoom){
+    log(`🔍 Zoom supported: ${JSON.stringify(capabilities.zoom)}`);
+    zoomSlider.min = capabilities.zoom.min;
+    zoomSlider.max = capabilities.zoom.max;
+    zoomSlider.step = capabilities.zoom.step || 0.1;
+    zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
+    zoomSlider.oninput = async () => {
+      try {
+        await track.applyConstraints({ advanced: [{ zoom: parseFloat(zoomSlider.value) }] });
+        log("Zoom set to " + zoomSlider.value);
+      } catch (e) {
+        log("⚠️ Zoom error: " + e);
+      }
+    };
+    zoomContainer.style.display = 'block';
+  } else {
+    log("ℹ️ Zoom not supported on this device");
+    zoomContainer.style.display = 'none';
   }
+}
+
 
   function startScanner(){
   currentCameraId = cameraSelect.value;
@@ -172,15 +174,18 @@
     onScanFailure
   ).then(()=>{
     scanning = true;
-    
-    // Access internal video track directly
-    videoTrack = html5QrCode._localVideoTrack;
-    if (videoTrack) {
-      log("Video track obtained");
-      setupZoom(videoTrack);
-    } else {
-      log("Failed to get video track");
-    }
+
+    // Wait before accessing video track
+    setTimeout(() => {
+      videoTrack = html5QrCode._localVideoTrack;
+      if (videoTrack) {
+        log("✅ Video track obtained");
+        setupZoom(videoTrack);
+      } else {
+        log("❌ Failed to get video track — zoom will be unavailable.");
+        zoomContainer.style.display = 'none';
+      }
+    }, 250); // allow time for internal setup
 
     timeoutHandle = setTimeout(()=>{
       if(scanning){
