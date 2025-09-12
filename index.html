@@ -1,297 +1,171 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QR Code Scanner</title>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"
-          integrity="sha512-r6rDA7W6ZeQhvl8S7yRVQUKVHdexq+GAlNkNNqVC7YyIV+NwqCTJe2hDWCiffTyRNOeGEzRRJ9ifvRm/HCzGYg=="
-          crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
-  <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-    #reader { width: 100%; max-width: 480px; margin: 20px auto; display:none; }
-    #output, #log { margin-top: 20px; word-break: break-word; }
-    #output { font-size: 1.2em; font-weight: bold; }
-    #controls select, #controls button, #zoomSlider { margin: 5px; padding: 8px 12px; font-size: 1em; }
-    #controls { display: none; margin: 15px 0; }
-    #startBtn, #newScanBtn { padding: 10px 20px; font-size: 1.1em; }
-    #log {
-      background: #f0f0f0; border: 1px solid #ccc; padding: 10px;
-      max-height: 150px; overflow-y: auto; font-size: 0.85em; white-space: pre-wrap;
-    }
-    #version {
-      position: fixed; top: 10px; right: 10px;
-      background: #333; color: #fff; padding: 4px 8px;
-      font-size: 0.8em; border-radius: 4px; opacity: 0.8;
-    }
-    #zoomContainer { display: none; margin-top: 10px; }
-
-    #label-container { display: none; margin-top: 20px; }
-    .label {
-      width: 5cm; height: 2.5cm;
-      padding: 0.3cm; box-sizing: border-box;
-      font-size: 6pt; font-family: Arial, sans-serif;
-      border: 1px solid #000; margin: 0 auto;
-      text-align: left;
-    }
-    .label div { margin-bottom: 1mm; line-height: 1.2em; }
-
-    @media print {
-      body * { visibility: hidden; }
-      #print-label, #print-label * { visibility: visible; }
-      #print-label { position: absolute; left: 0; top: 0; }
-    }
-  </style>
-</head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mic sound detector to API</title>
+<style>
+  body { font-family: system-ui, Arial, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  fieldset { margin: 1rem 0; }
+  label { display:block; margin:.5rem 0 .25rem; }
+  input[type="text"], input[type="number"] { width: 100%; padding:.5rem; }
+  .row { display:flex; gap:1rem; }
+  .row > div { flex:1; }
+  .status { margin-top: .5rem; font-size: .9rem; opacity: .8; }
+  button { padding:.6rem 1rem; }
+  meter { width: 100%; height: 1rem; }
+</style>
 <body>
-<div id="version">v0.0.19</div>
+  <h1>Mic sound detector to API</h1>
 
-<h1>QR Code Scanner</h1>
-
-<button id="startBtn">Scan QR Code</button>
-
-<div id="controls">
-  <select id="cameraSelect"></select>
-  <button id="torchBtn">Toggle Torch</button>
-  <button id="focusBtn">Refocus</button>
-  <button id="cancelBtn">Cancel Scan</button>
-  <div id="zoomContainer">
-    <label for="zoomSlider">Zoom:</label>
-    <input type="range" id="zoomSlider" min="1" max="1" step="0.1" value="1" />
-  </div>
-</div>
-
-<div id="reader"></div>
-<div id="output"></div>
-<button id="newScanBtn" style="display:none;">Scan New QR</button>
-
-<!-- Printable Label -->
-<div id="label-container">
-  <div id="print-label">
-    <div class="label">
-      <div><strong>Name:</strong> <span id="field-name"></span></div>
-      <div><strong>Number:</strong> <span id="field-number"></span></div>
-      <div style="margin-bottom: 2mm;"><strong>DOB:</strong> <span id="field-dob"></span> &nbsp;&nbsp; <strong>SEX:</strong> <span id="field-sex"></span></div>
-      <div style="margin-bottom: 3mm;"><strong>Date/Time:</strong> <span id="field-datetime"></span></div>
-      <div><strong>Signed:</strong> ____________________________</div>
+  <fieldset>
+    <legend>Settings</legend>
+    <label>API URL</label>
+    <input id="apiUrl" type="text" placeholder="https://example.com/endpoint">
+    <label>API bearer token, optional</label>
+    <input id="apiToken" type="text" placeholder="abc123">
+    <div class="row">
+      <div>
+        <label>RMS threshold</label>
+        <input id="threshold" type="number" step="0.005" min="0.005" value="0.02">
+      </div>
+      <div>
+        <label>Cooldown seconds</label>
+        <input id="cooldown" type="number" min="0" value="30">
+      </div>
     </div>
-  </div>
-  <button onclick="window.print()">🖨️ Print Label</button>
-</div>
+  </fieldset>
 
-<div id="log">[debug]</div>
+  <div class="row">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <button id="wakeBtn" title="Prevents the screen from sleeping">Screen wake lock</button>
+  </div>
+
+  <fieldset>
+    <legend>Live</legend>
+    <label>Current RMS</label>
+    <meter id="meter" min="0" max="0.2" value="0"></meter>
+    <div class="status" id="status">Idle</div>
+    <div class="status" id="lastSent">Last sent: never</div>
+  </fieldset>
 
 <script>
-  const startBtn = document.getElementById('startBtn');
-  const controlsDiv = document.getElementById('controls');
-  const cameraSelect = document.getElementById('cameraSelect');
-  const readerDiv = document.getElementById('reader');
-  const outputDiv = document.getElementById('output');
-  const newScanBtn = document.getElementById('newScanBtn');
-  const torchBtn = document.getElementById('torchBtn');
-  const focusBtn = document.getElementById('focusBtn');
-  const cancelBtn = document.getElementById('cancelBtn');
-  const zoomSlider = document.getElementById('zoomSlider');
-  const zoomContainer = document.getElementById('zoomContainer');
+let ac, mic, analyser, rafId, wakeLock;
+let lastSent = 0;
+const meter = document.getElementById('meter');
+const statusEl = document.getElementById('status');
+const lastSentEl = document.getElementById('lastSent');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const wakeBtn = document.getElementById('wakeBtn');
 
-  let html5QrCode;
-  let currentCameraId = null;
-  let torchOn = false;
-  let scanning = false;
-  let timeoutHandle = null;
-  let videoTrack = null;
+async function start() {
+  try {
+    if (!location.protocol.startsWith('https') && location.hostname !== 'localhost') {
+      alert('Mic access in browsers generally requires HTTPS. Serve this file over HTTPS.');
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }});
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    mic = ac.createMediaStreamSource(stream);
+    analyser = ac.createAnalyser();
+    analyser.fftSize = 2048;
+    mic.connect(analyser);
 
-  function log(msg){
-    console.log(msg);
-    const logDiv = document.getElementById('log');
-    logDiv.textContent += `\n${msg}`;
-    logDiv.scrollTop = logDiv.scrollHeight;
+    loop();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    setStatus('Listening');
+  } catch (e) {
+    console.error(e);
+    setStatus('Mic permission denied or unavailable');
   }
+}
 
-  function showStartState(){
-    startBtn.style.display = 'inline-block';
-    controlsDiv.style.display = 'none';
-    readerDiv.style.display = 'none';
-    newScanBtn.style.display = 'none';
-    outputDiv.textContent = '';
-    zoomContainer.style.display = 'none';
-    document.getElementById('label-container').style.display = 'none';
-    clearTimeout(timeoutHandle);
+function stop() {
+  cancelAnimationFrame(rafId);
+  if (ac) ac.close();
+  ac = mic = analyser = null;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  setStatus('Stopped');
+}
+
+function setStatus(t) { statusEl.textContent = t; }
+
+function rmsFromTimeDomain(buf) {
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = buf[i]; // float between -1 and 1
+    sum += v * v;
   }
+  return Math.sqrt(sum / buf.length);
+}
 
-  function showScanningState(){
-    startBtn.style.display = 'none';
-    controlsDiv.style.display = 'block';
-    readerDiv.style.display = 'block';
-    newScanBtn.style.display = 'none';
-    outputDiv.textContent = 'Scanning…';
-  }
-
-  function showResultState(){
-    startBtn.style.display = 'none';
-    controlsDiv.style.display = 'none';
-    readerDiv.style.display = 'none';
-    newScanBtn.style.display = 'inline-block';
-    zoomContainer.style.display = 'none';
-  }
-
-  function populateCameras(devices){
-    cameraSelect.innerHTML = '';
-    devices.forEach((device, idx)=>{
-      const opt = document.createElement('option');
-      opt.value = device.id;
-      opt.text = device.label || `Camera ${idx+1}`;
-      cameraSelect.appendChild(opt);
+async function notify(rms) {
+  const url = document.getElementById('apiUrl').value.trim();
+  if (!url) return;
+  const token = document.getElementById('apiToken').value.trim();
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { 'authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ event: 'sound_detected', rms: rms, ts: Math.floor(Date.now()/1000) })
     });
-    const saved = localStorage.getItem('lastCameraId');
-    if(saved && devices.find(d=>d.id===saved)){
-      cameraSelect.value = saved;
-    }
+    lastSent = Date.now();
+    lastSentEl.textContent = `Last sent: ${new Date(lastSent).toLocaleString()}. Status ${res.status}`;
+  } catch (err) {
+    console.error(err);
+    lastSentEl.textContent = `Send failed at ${new Date().toLocaleString()}`;
   }
+}
 
-  async function setupZoom(track){
-    const capabilities = track.getCapabilities();
-    if(capabilities.zoom){
-      log(`🔍 Zoom supported: ${JSON.stringify(capabilities.zoom)}`);
-      zoomSlider.min = capabilities.zoom.min;
-      zoomSlider.max = capabilities.zoom.max;
-      zoomSlider.step = capabilities.zoom.step || 0.1;
-      zoomSlider.value = track.getSettings().zoom || capabilities.zoom.min;
-      zoomSlider.oninput = async () => {
-        try {
-          await track.applyConstraints({ advanced: [{ zoom: parseFloat(zoomSlider.value) }] });
-          log("Zoom set to " + zoomSlider.value);
-        } catch (e) {
-          log("⚠️ Zoom error: " + e);
-        }
-      };
-      zoomContainer.style.display = 'block';
-    } else {
-      log("❌ Zoom not supported on this device");
-      zoomContainer.style.display = 'none';
-    }
+function loop() {
+  const thresh = parseFloat(document.getElementById('threshold').value || '0.02');
+  const cooldownMs = Math.max(0, parseInt(document.getElementById('cooldown').value || '30', 10) * 1000);
+
+  const buf = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(buf);
+  const rms = rmsFromTimeDomain(buf);
+  meter.value = Math.min(0.2, rms);
+
+  const now = Date.now();
+  if (rms >= thresh && now - lastSent >= cooldownMs) {
+    setStatus(`Sound detected, rms=${rms.toFixed(4)}. Sending...`);
+    notify(rms);
+  } else {
+    setStatus(`Listening, rms=${rms.toFixed(4)}`);
   }
+  rafId = requestAnimationFrame(loop);
+}
 
-  function startScanner(){
-    currentCameraId = cameraSelect.value;
-    localStorage.setItem('lastCameraId', currentCameraId);
-    if(!html5QrCode) html5QrCode = new Html5Qrcode("reader");
-    showScanningState();
-    log("Starting camera: " + currentCameraId);
-
-    html5QrCode.start(
-      currentCameraId,
-      { fps: 10, qrbox: { width: 300, height: 300 } },
-      onScanSuccess,
-      onScanFailure
-    ).then(()=>{
-      scanning = true;
-      setTimeout(() => {
-        const videoEl = document.querySelector("#reader video");
-        const stream = videoEl?.srcObject;
-        videoTrack = stream?.getVideoTracks?.()[0];
-        if(videoTrack){
-          log("✅ Video track obtained from DOM");
-          setupZoom(videoTrack);
-        } else {
-          log("❌ Failed to get video track — zoom will be unavailable.");
-        }
-      }, 500);
-
-      timeoutHandle = setTimeout(()=>{
-        if(scanning){
-          log('Timeout: no scan after 2 minutes');
-          stopScanner();
-          showStartState();
-        }
-      }, 120000);
-    }).catch(err=>{
-      log("Start error: " + err);
-      outputDiv.textContent = "Start error: " + err;
-      showStartState();
-    });
-  }
-
-  function stopScanner(){
-    clearTimeout(timeoutHandle);
-    if(html5QrCode){
-      html5QrCode.stop().then(()=> log("Camera stopped."))
-                        .catch(e=>log("Stop error: " + e));
-    }
-    scanning = false;
-    videoTrack = null;
-    zoomContainer.style.display = 'none';
-  }
-
-  function onScanSuccess(decodedText){
-    if(!scanning) return;
-    scanning = false;
-    log("Decoded: " + decodedText);
-    stopScanner();
-    showResultState();
-    outputDiv.textContent = `✅ Scanned: ${decodedText}`;
-
-    const parts = decodedText.split(",");
-    if (parts.length >= 6) {
-      document.getElementById('field-name').textContent = parts[1];
-      document.getElementById('field-number').textContent = parts[0];
-      document.getElementById('field-dob').textContent = parts[4];
-      document.getElementById('field-sex').textContent = parts[5];
-
-      const now = new Date();
-      const pad = n => n.toString().padStart(2, '0');
-      const timestamp = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-      document.getElementById('field-datetime').textContent = timestamp;
-
-      document.getElementById('label-container').style.display = 'block';
-    }
-  }
-
-  function onScanFailure(error){
-    // silent
-  }
-
-  async function toggleTorch(){
-    if(!videoTrack) return;
+// Screen wake lock to reduce throttling
+async function toggleWake() {
+  if ('wakeLock' in navigator) {
     try {
-      torchOn = !torchOn;
-      await videoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
-      log(`Torch ${torchOn ? 'ON' : 'OFF'}`);
-    } catch(e) {
-      log("Torch not supported: " + e);
+      if (!wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeBtn.textContent = 'Release wake lock';
+        wakeLock.addEventListener('release', () => wakeBtn.textContent = 'Screen wake lock');
+      } else {
+        await wakeLock.release();
+        wakeLock = null;
+        wakeBtn.textContent = 'Screen wake lock';
+      }
+    } catch (e) {
+      alert('Wake lock not available');
     }
+  } else {
+    alert('Wake lock API not supported on this browser');
   }
+}
 
-  async function requestFocus(){
-    if(!videoTrack) return;
-    try {
-      await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
-      log("Focus requested");
-    } catch(e) {
-      log("Focus not supported: " + e);
-    }
-  }
-
-  startBtn.addEventListener('click', startScanner);
-  cameraSelect.addEventListener('change', ()=> {
-    if(scanning){ stopScanner(); startScanner(); }
-  });
-  cancelBtn.addEventListener('click', ()=>{ stopScanner(); showStartState(); });
-  newScanBtn.addEventListener('click', showStartState);
-  torchBtn.addEventListener('click', toggleTorch);
-  focusBtn.addEventListener('click', requestFocus);
-
-  Html5Qrcode.getCameras().then(devices=> {
-    if(devices.length){ populateCameras(devices); }
-    else { outputDiv.textContent = 'No cameras found.'; log('No cameras found.'); }
-  }).catch(err=> {
-    outputDiv.textContent = 'Camera error: ' + err;
-    log('Camera error: ' + err);
-  });
-
-  showStartState();
+startBtn.addEventListener('click', start);
+stopBtn.addEventListener('click', stop);
+wakeBtn.addEventListener('click', toggleWake);
 </script>
 </body>
 </html>
