@@ -2,13 +2,13 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mic detector → Power Automate GET</title>
+<title>Sound detector → Power Automate (Teams Alert)</title>
 <style>
   :root { --warn:#b71c1c; }
   body { font-family: system-ui, Arial, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
   fieldset { margin: 1rem 0; }
   label { display:block; margin:.5rem 0 .25rem; }
-  input[type="text"], input[type="number"] { width: 100%; padding:.5rem; }
+  input[type="number"] { width: 100%; padding:.5rem; }
   .row { display:flex; gap:1rem; flex-wrap:wrap; }
   .row > div { flex:1 1 200px; }
   .status { margin-top:.5rem; font-size:.9rem; opacity:.85; }
@@ -19,24 +19,32 @@
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(183,28,28,.35)} 70%{box-shadow:0 0 0 14px rgba(183,28,28,0)} 100%{box-shadow:0 0 0 0 rgba(183,28,28,0)} }
 </style>
 <body>
-  <h1>Mic detector → Power Automate (GET on hold)</h1>
+  <h1>Sound detector → Teams alert via Power Automate</h1>
+
+  <p>
+    This page listens to your microphone (after you click Start and grant permission).  
+    If the microphone level stays above the chosen threshold for longer than the hold period,  
+    it will send a GET request directly into the hard-coded Power Automate flow URL.  
+    That Flow can then post into Teams or take any other action you configure.
+  </p>
 
   <fieldset>
     <legend>Settings</legend>
-    <label>Power Automate HTTP trigger URL</label>
-    <input id="apiUrl" type="text" placeholder="paste your Flow URL">
     <div class="row">
       <div>
-        <label>RMS threshold</label>
+        <label>RMS threshold (sensitivity)</label>
         <input id="threshold" type="number" step="0.005" min="0.005" value="0.02">
+        <small>Lower = more sensitive, higher = less sensitive. RMS is a measure of loudness.</small>
       </div>
       <div>
         <label>Hold seconds</label>
         <input id="holdSecs" type="number" min="0.2" step="0.1" value="2">
+        <small>How long the level must stay above the threshold before triggering.</small>
       </div>
       <div>
         <label>Cooldown seconds</label>
         <input id="cooldown" type="number" min="0" value="30">
+        <small>Minimum gap between alerts even if noise continues.</small>
       </div>
     </div>
   </fieldset>
@@ -47,14 +55,16 @@
     <button id="wakeBtn" title="Keep screen awake">Screen wake lock</button>
   </div>
 
-  <div id="alert" class="alert">Threshold held for over <span id="holdTarget">2</span> seconds. Alert sent.</div>
+  <div id="alert" class="alert">
+    Threshold held for over <span id="holdTarget">2</span> seconds. Alert sent to Power Automate.
+  </div>
 
   <fieldset>
-    <legend>Live</legend>
-    <label>Current RMS</label>
+    <legend>Live display</legend>
+    <label>Current RMS (sound level)</label>
     <meter id="meter" min="0" max="0.2" value="0"></meter>
 
-    <label style="margin-top:.75rem;">Hold progress</label>
+    <label style="margin-top:.75rem;">Hold progress (seconds above threshold)</label>
     <meter id="holdMeter" min="0" max="2" value="0"></meter>
 
     <div class="status" id="status">Idle</div>
@@ -63,11 +73,18 @@
   </fieldset>
 
 <script>
+// ------------------- CONFIGURATION -------------------
+// Hard-coded Power Automate Flow URL.
+// Treat this URL as a secret – anyone with it can trigger your Flow.
+const FLOW_URL = "https://defaultbd4e2dd1acd14501bd6e37bb4d3ad5.f4.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/cf92882cc04c4c6da093b041163e32c1/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=ciG1F1FHrfp8cPXr-_BCRsaJ7xraoiVyqljTBAgmefI";
+
+// ------------------- STATE -------------------
 let ac, mic, analyser, rafId, wakeLock;
 let lastTime = 0, holdMs = 0;
 let sentForCurrentHold = false;
 let lastSentAt = 0;
 
+// ------------------- DOM ELEMENTS -------------------
 const els = {
   meter: document.getElementById('meter'),
   holdMeter: document.getElementById('holdMeter'),
@@ -79,21 +96,15 @@ const els = {
   startBtn: document.getElementById('startBtn'),
   stopBtn: document.getElementById('stopBtn'),
   wakeBtn: document.getElementById('wakeBtn'),
-  apiUrl: document.getElementById('apiUrl'),
   threshold: document.getElementById('threshold'),
   holdSecs: document.getElementById('holdSecs'),
   cooldown: document.getElementById('cooldown')
 };
 
+// ------------------- CORE FUNCTIONS -------------------
 async function start() {
   try {
-    if (!location.protocol.startsWith('https') && location.hostname !== 'localhost') {
-      alert('Mic access usually requires HTTPS. Serve this over HTTPS.');
-      return;
-    }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-    });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     ac = new (window.AudioContext || window.webkitAudioContext)();
     mic = ac.createMediaStreamSource(stream);
     analyser = ac.createAnalyser();
@@ -134,20 +145,17 @@ function rmsFromTimeDomain(buf) {
   return Math.sqrt(sum / buf.length);
 }
 
-// Fire a GET to the Flow URL using an image beacon to avoid CORS
-function sendGet(rms, reason) {
-  const base = els.apiUrl.value.trim();
-  if (!base) return;
+// Fire a GET to the Flow URL with some query parameters.
+// Uses an Image beacon to avoid CORS issues.
+function sendGet(rms) {
   const qs = new URLSearchParams({
-    event: reason || 'sound_hold_reached',
+    event: 'sound_hold_reached',
     rms: rms.toFixed(4),
     ts: Math.floor(Date.now() / 1000).toString(),
     source: 'web-mic'
   });
   const img = new Image();
-  img.src = `${base}&${qs.toString()}`;
-  // Keep a reference briefly so it is not GC'd before the request goes
-  setTimeout(() => { /* allow GC */ }, 3000);
+  img.src = `${FLOW_URL}&${qs.toString()}`;
   lastSentAt = Date.now();
   els.lastSent.textContent = `Last sent: ${new Date(lastSentAt).toLocaleString()}`;
 }
@@ -173,18 +181,16 @@ function loop() {
 
   if (over) {
     holdMs += dt;
-    // When the hold threshold is crossed for the first time, and cooldown has passed, fire once
     if (!sentForCurrentHold && holdMs >= holdSecs * 1000 && Date.now() - lastSentAt >= cooldownMs) {
       setAlert(true);
       setStatus(`Hold reached. rms=${rms.toFixed(4)}. Sending GET`);
-      sendGet(rms, 'sound_hold_reached');
+      sendGet(rms);
       sentForCurrentHold = true;
     }
   } else {
     holdMs = 0;
     if (sentForCurrentHold) {
-      // Re-arm once levels drop back below threshold
-      sentForCurrentHold = false;
+      sentForCurrentHold = false; // re-arm
       setAlert(false);
     }
   }
@@ -199,27 +205,24 @@ function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// Screen wake lock to reduce throttling
+// Optional: stop the screen from sleeping so the loop keeps running
 async function toggleWake() {
   if ('wakeLock' in navigator) {
-    try {
-      if (!wakeLock) {
-        wakeLock = await navigator.wakeLock.request('screen');
-        els.wakeBtn.textContent = 'Release wake lock';
-        wakeLock.addEventListener('release', () => els.wakeBtn.textContent = 'Screen wake lock');
-      } else {
-        await wakeLock.release();
-        wakeLock = null;
-        els.wakeBtn.textContent = 'Screen wake lock';
-      }
-    } catch (e) {
-      alert('Wake lock not available');
+    if (!wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      els.wakeBtn.textContent = 'Release wake lock';
+      wakeLock.addEventListener('release', () => els.wakeBtn.textContent = 'Screen wake lock');
+    } else {
+      await wakeLock.release();
+      wakeLock = null;
+      els.wakeBtn.textContent = 'Screen wake lock';
     }
   } else {
     alert('Wake lock API not supported on this browser');
   }
 }
 
+// ------------------- WIRE UP BUTTONS -------------------
 els.startBtn.addEventListener('click', start);
 els.stopBtn.addEventListener('click', stop);
 els.wakeBtn.addEventListener('click', toggleWake);
