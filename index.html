@@ -4,47 +4,66 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sound detector → Power Automate (Teams Alert)</title>
 <style>
-  :root { --warn:#b71c1c; }
-  body { font-family: system-ui, Arial, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  :root { --warn:#b71c1c; --ink:#222; --muted:#7a7a7a; --ok:#2e7d32; }
+  body { font-family: system-ui, Arial, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: var(--ink); }
   fieldset { margin: 1rem 0; }
   label { display:block; margin:.5rem 0 .25rem; }
   input[type="number"] { width: 100%; padding:.5rem; }
   .row { display:flex; gap:1rem; flex-wrap:wrap; }
-  .row > div { flex:1 1 200px; }
+  .row > div { flex:1 1 220px; }
   .status { margin-top:.5rem; font-size:.9rem; opacity:.85; }
   button { padding:.6rem 1rem; }
   meter { width:100%; height:1rem; }
   .alert { display:none; margin:1rem 0; padding:.75rem 1rem; background:#ffebee; color:var(--warn); border:1px solid var(--warn); border-radius:8px; font-weight:600; animation:pulse 1.2s infinite; }
   .alert.on { display:block; }
   @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(183,28,28,.35)} 70%{box-shadow:0 0 0 14px rgba(183,28,28,0)} 100%{box-shadow:0 0 0 0 rgba(183,28,28,0)} }
+  .small { font-size:.85rem; color: var(--muted); }
+  .stats { display:flex; gap:1rem; flex-wrap:wrap; margin:.5rem 0 0; font-size:.9rem; color: var(--muted); }
+  .stats span { min-width: 10ch; }
+  .canvas-wrap { border:1px solid #ddd; border-radius:8px; padding:.5rem; }
+  canvas { width: 100%; height: 220px; display:block; }
+  .legend { display:flex; gap:1rem; font-size:.85rem; color: var(--muted); margin-top:.25rem; }
+  .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:.25rem; }
 </style>
 <body>
   <h1>Sound detector → Teams alert via Power Automate</h1>
 
   <p>
-    This page listens to your microphone (after you click Start and grant permission).  
-    If the microphone level stays above the chosen threshold for longer than the hold period,  
-    it will send a GET request directly into the hard-coded Power Automate flow URL.  
-    That Flow can then post into Teams or take any other action you configure.
+    This page listens to your microphone after you click Start and approve. If the level stays above the threshold for longer than the hold time, it sends a GET request to the Power Automate Flow URL. Use the graph to see the last 60 seconds of sound levels and tune sensitivity.
   </p>
 
   <fieldset>
     <legend>Settings</legend>
     <div class="row">
       <div>
-        <label>RMS threshold (sensitivity)</label>
-        <input id="threshold" type="number" step="0.005" min="0.005" value="0.02">
-        <small>Lower = more sensitive, higher = less sensitive. RMS is a measure of loudness.</small>
+        <label>RMS threshold</label>
+        <input id="threshold" type="number" step="0.001" min="0.001" value="0.02">
+        <small class="small">Lower is more sensitive. Typical quiet rooms sit around 0.008 to 0.02.</small>
       </div>
       <div>
         <label>Hold seconds</label>
         <input id="holdSecs" type="number" min="0.2" step="0.1" value="2">
-        <small>How long the level must stay above the threshold before triggering.</small>
+        <small class="small">How long the level must stay above the threshold before triggering.</small>
       </div>
       <div>
         <label>Cooldown seconds</label>
         <input id="cooldown" type="number" min="0" value="30">
-        <small>Minimum gap between alerts even if noise continues.</small>
+        <small class="small">Gap between alerts, even if noise continues.</small>
+      </div>
+      <div>
+        <label>Sensitivity gain ×</label>
+        <input id="gain" type="number" min="0.5" step="0.1" value="1.5">
+        <small class="small">Multiplies measured RMS before comparison. Use 1.0 to disable.</small>
+      </div>
+      <div>
+        <label>Smoothing (0 to 1)</label>
+        <input id="smooth" type="number" min="0" max="0.99" step="0.05" value="0.4">
+        <small class="small">Exponential moving average for the graph and detector. 0 is raw, higher is steadier.</small>
+      </div>
+      <div>
+        <label>Block size</label>
+        <input id="fftSize" type="number" min="512" step="512" value="1024">
+        <small class="small">Lower reacts faster, higher is steadier. Try 1024 or 2048.</small>
       </div>
     </div>
   </fieldset>
@@ -61,10 +80,24 @@
 
   <fieldset>
     <legend>Live display</legend>
-    <label>Current RMS (sound level)</label>
+    <label>Current RMS</label>
     <meter id="meter" min="0" max="0.2" value="0"></meter>
+    <div class="stats">
+      <span>Now: <span id="rmsNow">0.0000</span></span>
+      <span>Avg 60s: <span id="rmsAvg">0.0000</span></span>
+      <span>Min 60s: <span id="rmsMin">0.0000</span></span>
+      <span>Max 60s: <span id="rmsMax">0.0000</span></span>
+    </div>
 
-    <label style="margin-top:.75rem;">Hold progress (seconds above threshold)</label>
+    <div class="canvas-wrap">
+      <canvas id="rmsCanvas" width="900" height="220"></canvas>
+      <div class="legend">
+        <span><span class="swatch" style="background:#1976d2;"></span> RMS</span>
+        <span><span class="swatch" style="background:#ef6c00;"></span> Threshold</span>
+      </div>
+    </div>
+
+    <label style="margin-top:.75rem;">Hold progress</label>
     <meter id="holdMeter" min="0" max="2" value="0"></meter>
 
     <div class="status" id="status">Idle</div>
@@ -74,20 +107,26 @@
 
 <script>
 // ------------------- CONFIGURATION -------------------
-// Hard-coded Power Automate Flow URL.
-// Treat this URL as a secret – anyone with it can trigger your Flow.
 const FLOW_URL = "https://defaultbd4e2dd1acd14501bd6e37bb4d3ad5.f4.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/cf92882cc04c4c6da093b041163e32c1/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=ciG1F1FHrfp8cPXr-_BCRsaJ7xraoiVyqljTBAgmefI";
 
 // ------------------- STATE -------------------
 let ac, mic, analyser, rafId, wakeLock;
-let lastTime = 0, holdMs = 0;
-let sentForCurrentHold = false;
-let lastSentAt = 0;
+let lastTime = 0, holdMs = 0, sentForCurrentHold = false, lastSentAt = 0;
+let ema = 0;              // exponential moving average of RMS
+let emaInit = false;
 
-// ------------------- DOM ELEMENTS -------------------
+// 60s rolling buffer
+const GRAPH_HZ = 20;      // sample RMS for graph at 20 Hz
+const GRAPH_MS = 1000 / GRAPH_HZ;
+const WINDOW_SEC = 60;
+const CAPACITY = WINDOW_SEC * GRAPH_HZ;
+const ring = new Float32Array(CAPACITY);
+let ringIdx = 0, points = 0;
+let lastGraphTick = 0;
+
+// ------------------- DOM -------------------
 const els = {
   meter: document.getElementById('meter'),
-  holdMeter: document.getElementById('holdMeter'),
   status: document.getElementById('status'),
   lastSent: document.getElementById('lastSent'),
   holdInfo: document.getElementById('holdInfo'),
@@ -98,22 +137,42 @@ const els = {
   wakeBtn: document.getElementById('wakeBtn'),
   threshold: document.getElementById('threshold'),
   holdSecs: document.getElementById('holdSecs'),
-  cooldown: document.getElementById('cooldown')
+  cooldown: document.getElementById('cooldown'),
+  gain: document.getElementById('gain'),
+  smooth: document.getElementById('smooth'),
+  fftSize: document.getElementById('fftSize'),
+  rmsNow: document.getElementById('rmsNow'),
+  rmsAvg: document.getElementById('rmsAvg'),
+  rmsMin: document.getElementById('rmsMin'),
+  rmsMax: document.getElementById('rmsMax'),
+  holdMeter: document.getElementById('holdMeter'),
+  canvas: document.getElementById('rmsCanvas'),
 };
+const ctx = els.canvas.getContext('2d');
 
-// ------------------- CORE FUNCTIONS -------------------
+// ------------------- CORE -------------------
 async function start() {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Ask for the rawest stream we can get from the browser
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
     ac = new (window.AudioContext || window.webkitAudioContext)();
     mic = ac.createMediaStreamSource(stream);
     analyser = ac.createAnalyser();
-    analyser.fftSize = 2048;
+
+    // Use the selected fftSize
+    analyser.fftSize = clampInt(parseInt(els.fftSize.value || '1024', 10), 512, 16384);
+
     mic.connect(analyser);
 
+    // Reset state
     holdMs = 0;
     sentForCurrentHold = false;
     lastTime = performance.now();
+    lastGraphTick = performance.now();
+    emaInit = false;
+    ring.fill(0); ringIdx = 0; points = 0;
     els.holdTarget.textContent = String(parseFloat(els.holdSecs.value || '2'));
 
     loop();
@@ -145,8 +204,6 @@ function rmsFromTimeDomain(buf) {
   return Math.sqrt(sum / buf.length);
 }
 
-// Fire a GET to the Flow URL with some query parameters.
-// Uses an Image beacon to avoid CORS issues.
 function sendGet(rms) {
   const qs = new URLSearchParams({
     event: 'sound_hold_reached',
@@ -161,9 +218,11 @@ function sendGet(rms) {
 }
 
 function loop() {
-  const thresh = parseFloat(els.threshold.value || '0.02');
-  const holdSecs = Math.max(0.2, parseFloat(els.holdSecs.value || '2'));
+  const thresh = parseFloatSafe(els.threshold.value, 0.02);
+  const holdSecs = Math.max(0.2, parseFloatSafe(els.holdSecs.value, 2));
   const cooldownMs = Math.max(0, parseInt(els.cooldown.value || '30', 10) * 1000);
+  const gain = Math.max(0.1, parseFloatSafe(els.gain.value, 1.0));
+  const alpha = clamp(parseFloatSafe(els.smooth.value, 0.3), 0, 0.99);
 
   els.holdMeter.max = holdSecs;
   els.holdTarget.textContent = String(holdSecs);
@@ -172,60 +231,156 @@ function loop() {
   const dt = now - lastTime;
   lastTime = now;
 
+  // Read a time-domain frame and compute RMS
   const buf = new Float32Array(analyser.fftSize);
   analyser.getFloatTimeDomainData(buf);
-  const rms = rmsFromTimeDomain(buf);
-  els.meter.value = Math.min(0.2, rms);
+  let rms = rmsFromTimeDomain(buf);
 
-  const over = rms >= thresh;
+  // Apply gain and smoothing for detection and graph
+  rms *= gain;
+  if (!emaInit) { ema = rms; emaInit = true; }
+  else { ema = alpha * ema + (1 - alpha) * rms; }
 
+  // Update meter and stats ring buffer every GRAPH_MS
+  if (now - lastGraphTick >= GRAPH_MS) {
+    lastGraphTick = now;
+    pushRing(ema);
+    drawGraph(thresh);
+    updateStats();
+  }
+
+  els.meter.value = Math.min(0.2, ema);
+  els.rmsNow.textContent = ema.toFixed(4);
+
+  // Hold detection
+  const over = ema >= thresh;
   if (over) {
     holdMs += dt;
     if (!sentForCurrentHold && holdMs >= holdSecs * 1000 && Date.now() - lastSentAt >= cooldownMs) {
       setAlert(true);
-      setStatus(`Hold reached. rms=${rms.toFixed(4)}. Sending GET`);
-      sendGet(rms);
+      setStatus(`Hold reached. rms=${ema.toFixed(4)}. Sending GET`);
+      sendGet(ema);
       sentForCurrentHold = true;
     }
   } else {
     holdMs = 0;
-    if (sentForCurrentHold) {
-      sentForCurrentHold = false; // re-arm
-      setAlert(false);
-    }
+    if (sentForCurrentHold) { sentForCurrentHold = false; setAlert(false); }
   }
-
   els.holdMeter.value = holdMs / 1000;
   els.holdInfo.textContent = `Held above threshold: ${(holdMs/1000).toFixed(2)}s`;
 
-  if (!sentForCurrentHold) {
-    setStatus(`Listening, rms=${rms.toFixed(4)}`);
-  }
+  if (!sentForCurrentHold) setStatus(`Listening, rms=${ema.toFixed(4)}`);
 
   rafId = requestAnimationFrame(loop);
 }
 
-// Optional: stop the screen from sleeping so the loop keeps running
+// ------------------- Graph and stats -------------------
+function pushRing(value) {
+  ring[ringIdx] = value;
+  ringIdx = (ringIdx + 1) % CAPACITY;
+  if (points < CAPACITY) points++;
+}
+
+function computeStats() {
+  if (points === 0) return { min: 0, max: 0, avg: 0 };
+  let sum = 0, mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < points; i++) {
+    const idx = (ringIdx - 1 - i + CAPACITY) % CAPACITY;
+    const v = ring[idx];
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    sum += v;
+  }
+  return { min: mn, max: mx, avg: sum / points };
+}
+
+function updateStats() {
+  const { min, max, avg } = computeStats();
+  els.rmsMin.textContent = min.toFixed(4);
+  els.rmsMax.textContent = max.toFixed(4);
+  els.rmsAvg.textContent = avg.toFixed(4);
+}
+
+function drawGraph(threshold) {
+  const w = els.canvas.width, h = els.canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // axes
+  ctx.strokeStyle = '#e0e0e0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0.5, 0.5);
+  ctx.lineTo(0.5, h - 0.5);
+  ctx.lineTo(w - 0.5, h - 0.5);
+  ctx.stroke();
+
+  // threshold line
+  const yThresh = mapRmsToY(threshold, h);
+  ctx.strokeStyle = '#ef6c00';
+  ctx.setLineDash([6, 6]);
+  ctx.beginPath();
+  ctx.moveTo(0, yThresh);
+  ctx.lineTo(w, yThresh);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // draw RMS path (last 60s from oldest to newest)
+  ctx.strokeStyle = '#1976d2';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+
+  const pxPerPoint = w / CAPACITY;
+  let first = true;
+  for (let i = points - 1; i >= 0; i--) {
+    const idx = (ringIdx - 1 - i + CAPACITY) % CAPACITY;
+    const x = w - (points - 1 - i) * pxPerPoint;
+    const y = mapRmsToY(ring[idx], h);
+    if (first) { ctx.moveTo(x, y); first = false; }
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function mapRmsToY(v, h) {
+  // Map 0..0.2 RMS to bottom..top, clamp
+  const vmax = 0.2, vv = Math.max(0, Math.min(v, vmax));
+  const norm = vv / vmax;      // 0 at 0, 1 at 0.2
+  return h - norm * h;         // canvas y grows downwards
+}
+
+// ------------------- Wake lock -------------------
 async function toggleWake() {
   if ('wakeLock' in navigator) {
-    if (!wakeLock) {
-      wakeLock = await navigator.wakeLock.request('screen');
-      els.wakeBtn.textContent = 'Release wake lock';
-      wakeLock.addEventListener('release', () => els.wakeBtn.textContent = 'Screen wake lock');
-    } else {
-      await wakeLock.release();
-      wakeLock = null;
-      els.wakeBtn.textContent = 'Screen wake lock';
+    try {
+      if (!wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        els.wakeBtn.textContent = 'Release wake lock';
+        wakeLock.addEventListener('release', () => els.wakeBtn.textContent = 'Screen wake lock');
+      } else {
+        await wakeLock.release();
+        wakeLock = null;
+        els.wakeBtn.textContent = 'Screen wake lock';
+      }
+    } catch {
+      alert('Wake lock not available');
     }
   } else {
     alert('Wake lock API not supported on this browser');
   }
 }
 
-// ------------------- WIRE UP BUTTONS -------------------
-els.startBtn.addEventListener('click', start);
-els.stopBtn.addEventListener('click', stop);
-els.wakeBtn.addEventListener('click', toggleWake);
+// ------------------- Helpers -------------------
+function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
+function clampInt(x, a, b){ return Math.max(a, Math.min(b, x|0)); }
+function parseFloatSafe(v, d){ const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
+
+// ------------------- Events -------------------
+document.getElementById('startBtn').addEventListener('click', start);
+document.getElementById('stopBtn').addEventListener('click', stop);
+document.getElementById('wakeBtn').addEventListener('click', toggleWake);
+document.getElementById('fftSize').addEventListener('change', () => {
+  if (analyser) analyser.fftSize = clampInt(parseInt(els.fftSize.value || '1024', 10), 512, 16384);
+});
 </script>
 </body>
 </html>
